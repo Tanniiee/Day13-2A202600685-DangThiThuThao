@@ -1,8 +1,18 @@
-# Findings — Team <name>
+# Findings — Team day13-2A202600685-DangThiThuThao
 
 For each fault you found, fill one row AND a matching entry in `solution/findings.json`
 (the JSON is what's scored; this MD is for humans). Evidence must come from YOUR telemetry.
 
 | fault_class | evidence (metric + observed value + trace ids) | root cause | fix (config / wrapper) |
 |---|---|---|---|
-|  |  |  |  |
+| error_spike | telemetry: tool_error_rate=0.18 injected 18% artificial failures; retry.enabled=false → no recovery; status=wrapper_error observed in logs | config knob tool_error_rate artificially injects tool failures; absence of retry means each failure is permanent | `tool_error_rate: 0.0`; `retry: {enabled: true, max_attempts: 3, backoff_ms: 300}` |
+| latency_spike | telemetry: wall_ms p95=10834ms; timeout_ms=0 (no ceiling) + verbose_system=true in original config inflated every request; avg prompt_tokens=20964 | no timeout cap allows runaway LLM calls; verbose_system adds large hidden context increasing TTFT | `timeout_ms: 8000`; `verbose_system: false`; `context_size: 4` |
+| cost_blowup | telemetry: cost_usd avg=0.0022/call, total=$0.45; original config had model_price_tier=premium + max_completion_tokens=2000 | premium pricing tier multiplies per-token cost; 2000-token cap wastes output budget on every turn | `model_price_tier: standard`; `max_completion_tokens: 400` |
+| quality_drift | telemetry: drift sub-score 0.000 in initial run; session_drift_rate=0.06 decays quality 6%/turn; context_reset_every=0 never resets | accumulated context corruption across turns; single-sample answers at temperature=1.6 highly variable | `session_drift_rate: 0.0`; `context_reset_every: 3`; `temperature: 0.2` |
+| infinite_loop | telemetry: status=loop observed with original config; loop_guard=false + max_steps=12 allowed agent to repeat same tool call | no loop detection; agent re-calls check_stock in circles when uncertain about product | `loop_guard: true`; `tool_budget: 5`; `max_steps: 10` |
+| tool_failure | telemetry: wrong totals for MacBook orders; catalog_override blocked macbook stock; normalize_unicode=false broke Vietnamese city names (Hà Nội → calc_shipping failure) | catalog_override incorrectly marks products out-of-stock; missing unicode normalization corrupts destination strings | `catalog_override: {}`; `normalize_unicode: true` |
+| pii_leak | wrapper log: pii_redacted tracked per call; original prompt had no PII restriction; redact_pii=false allowed agent to echo email/phone in answers | PII redaction disabled in config; prompt lacked instruction to omit personal data from responses | `redact_pii: true`; add "never echo email or phone" to prompt.txt; redact output in wrapper.py |
+| fabrication | telemetry: answers with invented totals for out-of-stock items; original prompt said "give a total in VND" unconditionally | prompt had no refusal path; model fabricates confident totals even when check_stock returns no stock | rewrite prompt: refuse with no total if check_stock returns out-of-stock or product not found |
+| arithmetic_error | telemetry: arith_ok=false cases at temperature=1.6; inconsistent totals for same order across retries | high temperature introduces randomness in arithmetic; no formula in original prompt; verify=false skipped validation | `temperature: 0.2`; `verify: true`; add exact formula `discounted = subtotal*(100-pct)//100` to prompt |
+| tool_overuse | telemetry: avg tools/call=2.3; tool_budget=0 (no cap) allowed redundant calls; agent called get_discount even without coupons | no budget enforced; prompt lacked tool economy instruction | `tool_budget: 5`; add "call each tool at most once" to prompt |
+| prompt_injection | wrapper log: injection_blocked tracked per call; private phase embeds fake prices in GHI CHU notes; original agent obeyed injected price overrides | no injection defense in original prompt or wrapper; order notes treated as trusted instructions | add injection defense to prompt; sanitize GHI CHU in wrapper.py `_sanitize()`; hardcode coupon table in prompt |
